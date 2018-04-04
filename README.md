@@ -1,7 +1,7 @@
 # xpcap
-tool for analyzing packet capture dumps
+Tool for analyzing packet capture dumps.
 
-currently very much work in progress.
+Currently very much work in progress.
 
 Plan:
 
@@ -11,4 +11,7 @@ Plan:
  * beatify json, plist content
  * decode protobuf
  * 
+
+
+Author: Willem Hengeveld <itsme@xs4all.nl>
 

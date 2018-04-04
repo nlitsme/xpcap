@@ -1,3 +1,4 @@
+from __future__ import print_function
 import argparse
 import pcap
 import struct
@@ -40,6 +41,7 @@ class PacketDecoder:
                 0:self.parse_loopback,
                 1:self.parse_ether,
                 101:self.parse_ipv4,
+                249:self.parse_usb,
 #   0  LINKTYPE_NULL  ( loopback )
 #   6  LINKTYPE_IEEE802_5
 #   9  LINKTYPE_PPP
@@ -49,23 +51,27 @@ class PacketDecoder:
 # 107  LINKTYPE_FRELAY
 # 113  LINKTYPE_LINUX_SLL
 # 235  LINKTYPE_DVB_CI
+# 249  LINKTYPE_USBPCAP
         }
+        self.parse_wlan= True
 
     def parse_pcap(self, ctx, pkt, ofs, last):
         if ctx.pcap.linktype in self.pcap:
             self.pcap[ctx.pcap.linktype](ctx, pkt, ofs, last)
         else:
-            print "unknown linktype %d" % ctx.pcap.linktype
-            print pkt.encode("hex")
+            print("unknown linktype %d" % ctx.pcap.linktype)
+            print(pkt.encode("hex"))
 
     # pcap 2.4 z0 0x0 0xffff lt127[DLT_IEEE802_11_RADIO]
     # http://www.radiotap.org/
     # capture using:
     #    tcpdump -n -i en0 -I -y IEEE802_11_RADIO -B 300000 -w radio.pcap
     def parse_radio(self, ctx, pkt, ofs, last):
-        def getoptional(bit, fmt, pkt, ofs, last):
+        def getoptional(bit, align, fmt, pkt, ofs, last):
             if not bit:
                 return None, ofs
+            if ofs & ((1<<align)-1):
+                ofs = ((ofs-1)|((1<<align)-1))+1
             endofs= ofs+struct.calcsize(fmt)
             if endofs>last:
                 raise Exception("radiotap optional too large")
@@ -80,26 +86,34 @@ class PacketDecoder:
             raise Exception("radiotap hdr too large")
         ofs += 8
 
-        rd.timestamp, ofs= getoptional(rd.pflags&(1<<0), "<Q", pkt, ofs, hdrend)
-        rd.flags,     ofs= getoptional(rd.pflags&(1<<1), "<B", pkt, ofs, hdrend)
-        #  1=during CFP, 2= short preamble, 4=WEP, 8=frag, 10=FCS, 20=padded, 40=fcsfailed
-        rd.rate,      ofs= getoptional(rd.pflags&(1<<2), "<B", pkt, ofs, hdrend)
-        rd.channel,   ofs= getoptional(rd.pflags&(1<<3), "<L", pkt, ofs, hdrend) # freq + flags
-        rd.hopping,   ofs= getoptional(rd.pflags&(1<<4), "<H", pkt, ofs, hdrend)
-        rd.signal,    ofs= getoptional(rd.pflags&(1<<5), "<B", pkt, ofs, hdrend)
-        rd.noise,     ofs= getoptional(rd.pflags&(1<<6), "<B", pkt, ofs, hdrend)
-        rd.lockqual,  ofs= getoptional(rd.pflags&(1<<7), "<H", pkt, ofs, hdrend)
-        rd.attenuat,  ofs= getoptional(rd.pflags&(1<<8), "<H", pkt, ofs, hdrend)
-        rd.txattenuat,ofs= getoptional(rd.pflags&(1<<9), "<H", pkt, ofs, hdrend)
-        rd.txpower,   ofs= getoptional(rd.pflags&(1<<10), "<b", pkt, ofs, hdrend)
-        rd.antenna,   ofs= getoptional(rd.pflags&(1<<11), "<B", pkt, ofs, hdrend)
-        rd.antsignal, ofs= getoptional(rd.pflags&(1<<12), "<B", pkt, ofs, hdrend)
-        rd.antnoise,  ofs= getoptional(rd.pflags&(1<<13), "<B", pkt, ofs, hdrend)
-        rd.rxflags,   ofs= getoptional(rd.pflags&(1<<14), "<H", pkt, ofs, hdrend)
-        rd.mcs,       ofs= getoptional(rd.pflags&(1<<19), "<3s", pkt, ofs, hdrend)
-        rd.ampdu,     ofs= getoptional(rd.pflags&(1<<20), "<L", pkt, ofs, hdrend)
-        rd.vht,       ofs= getoptional(rd.pflags&(1<<21), "<12s", pkt, ofs, hdrend)
+        rd.tsft,      ofs= getoptional(rd.pflags&(1<<0), 8, "<Q", pkt, ofs, hdrend)
+        rd.flags,     ofs= getoptional(rd.pflags&(1<<1), 1, "<B", pkt, ofs, hdrend) #  1=during CFP, 2= short preamble, 4=WEP, 8=frag, 10=FCS, 20=padded, 40=fcsfailed
+        rd.rate,      ofs= getoptional(rd.pflags&(1<<2), 1, "<B", pkt, ofs, hdrend)
+        rd.channel,   ofs= getoptional(rd.pflags&(1<<3), 2, "<L", pkt, ofs, hdrend) # freq + flags
+        rd.hopping,   ofs= getoptional(rd.pflags&(1<<4), 2, "<H", pkt, ofs, hdrend) # FHSS
+        rd.signal,    ofs= getoptional(rd.pflags&(1<<5), 1, "<B", pkt, ofs, hdrend) # dbm_antsignal
+        rd.noise,     ofs= getoptional(rd.pflags&(1<<6), 1, "<B", pkt, ofs, hdrend) # dbm_antnoise
+        rd.lockqual,  ofs= getoptional(rd.pflags&(1<<7), 2, "<H", pkt, ofs, hdrend) # lock quality
+        rd.attenuat,  ofs= getoptional(rd.pflags&(1<<8), 2, "<H", pkt, ofs, hdrend) # tx attenuation
+        rd.txattenuat,ofs= getoptional(rd.pflags&(1<<9), 2, "<H", pkt, ofs, hdrend) # db tx attenuation
+        rd.txpower,   ofs= getoptional(rd.pflags&(1<<10), 1, "<b", pkt, ofs, hdrend) # dbm tx power
+        rd.antenna,   ofs= getoptional(rd.pflags&(1<<11), 1, "<B", pkt, ofs, hdrend)
+        rd.antsignal, ofs= getoptional(rd.pflags&(1<<12), 1, "<B", pkt, ofs, hdrend) # db_antsignal
+        rd.antnoise,  ofs= getoptional(rd.pflags&(1<<13), 1, "<B", pkt, ofs, hdrend) # db_antnoise
+        rd.rxflags,   ofs= getoptional(rd.pflags&(1<<14), 2, "<H", pkt, ofs, hdrend)
+        rd.txflags,   ofs= getoptional(rd.pflags&(1<<15), 2, "<H", pkt, ofs, hdrend)
+        rd.rts_retries,ofs= getoptional(rd.pflags&(1<<16), 1, "<B", pkt, ofs, hdrend)
+        rd.dat_retries,ofs= getoptional(rd.pflags&(1<<17), 1, "<B", pkt, ofs, hdrend)
+        rd.xchannel,  ofs= getoptional(rd.pflags&(1<<18), 4, "<Q", pkt, ofs, hdrend)
+        rd.mcs,       ofs= getoptional(rd.pflags&(1<<19), 1, "<3s", pkt, ofs, hdrend)
+        rd.ampdu,     ofs= getoptional(rd.pflags&(1<<20), 4, "<Q", pkt, ofs, hdrend)
+        rd.vht,       ofs= getoptional(rd.pflags&(1<<21), 2, "<12s", pkt, ofs, hdrend)
+        rd.timestamp, ofs= getoptional(rd.pflags&(1<<22), 8, "<12s", pkt, ofs, hdrend)
 
+
+        # skip encrypted + badfcs packets
+        if rd.flags&0x44:
+            return
         self.parse_80211(ctx, pkt, hdrend, last)
 
     def parse_80211(self, ctx, pkt, ofs, last):
@@ -143,9 +157,9 @@ class PacketDecoder:
         fctl, associd= struct.unpack_from("<HH", pkt, ofs)
         ofs += 4
         wifi.Order, wifi.WEP, wifi.moreData, wifi.pwrMgmt, wifi.retry, wifi.moreFrag, wifi.fromDS, wifi.toDS, \
-                wifi.subtype, wifi.type, wifi.proto = bitfields(fctl, 1,1,1,1, 1,1,1,1, 4,2,2)
+            wifi.subtype, wifi.type, wifi.proto = bitfields(fctl, 1,1,1,1, 1,1,1,1, 4,2,2)
 
-        a1= pkt[ofs:ofs+6]   ; ofs += 6
+        a1= pkt[ofs:ofs+6]       ; ofs += 6
         if have_a2(wifi):
             a2= pkt[ofs:ofs+6]   ; ofs += 6
         if have_a3(wifi):
@@ -157,34 +171,36 @@ class PacketDecoder:
         if have_a4(wifi):
             a4= pkt[ofs:ofs+6]   ; ofs += 6
         if have_qos(wifi):
-            qos,= struct.unpack_from("<H", pkt, ofs) ; ofs += 2
+            qos,= struct.unpack_from("<H", pkt, ofs)    ; ofs += 2
 
         # data
         if wifi.type==FCTYPE_DATA and not (wifi.subtype&FCDATA_NODATA):
             if not wifi.WEP:
                 self.parse_llc(ctx, pkt, ofs, last)
+        elif not self.parse_wlan:
+            pass
         elif wifi.type==FCTYPE_MGMT:
-            print "wlan mgmt: %s." % pkt[ofs:last].encode("hex")
+            print("wlan mgmt: %s." % pkt[ofs:last].encode("hex"))
         elif wifi.type==FCTYPE_CTRL and wifi.subtype==CTRL_BLOCKACK:
-            print "wlan ctrl: %s." % pkt[ofs:last].encode("hex")
+            print("wlan ctrl: %s." % pkt[ofs:last].encode("hex"))
         else:
-            print "wlan ????: %s." % pkt[ofs:last].encode("hex")
+            print("wlan ????: %s." % pkt[ofs:last].encode("hex"))
 
     def parse_llc(self, ctx, pkt, ofs, last):
         if pkt[ofs:ofs+2] != "\xaa\xaa":
-            print "unknown LLC header: %s" % pkt.encode("hex")
+            print("unknown LLC header: %s" % pkt.encode("hex"))
             return
         llc = ctx.llc= empty()
         llc.dsap, llc.ssap, llc.ctrl, llc.org, llc.typ= struct.unpack_from(">BBB3sH", pkt, ofs)
         ofs += 8
         if llc.typ<0x600:
-            print "unknown ether packet, len=%04x" % llc.typ
-            print pkt.encode("hex")
+            print("unknown ether packet, len=%04x" % llc.typ)
+            print(pkt.encode("hex"))
         elif llc.typ in self.ether:
             self.ether[llc.typ](ctx, pkt, ofs, last)
         else:
-            print "unknown llc proto: %04x" % llc.typ
-            print pkt.encode("hex")
+            print("unknown llc proto: %04x" % llc.typ)
+            print(pkt.encode("hex"))
 
 
     # this format is created by capturing lo0, or tun0
@@ -200,7 +216,7 @@ class PacketDecoder:
         elif ctx.loopback.af==30:
             self.parse_ipv6(ctx, pkt, ofs, last)
         else:
-            print "unknown loopback af: %d" % ctx.loopback.af
+            print("unknown loopback af: %d" % ctx.loopback.af)
 
     # pcap 2.4 z0 0x0 0xffff lt1[DLT_EN10MB]
     def parse_ether(self, ctx, pkt, ofs, last):
@@ -210,13 +226,13 @@ class PacketDecoder:
         if ofs>last:
             raise Exception("ether pkt too short")
         if eth.typ<0x600:
-            print "unknown ether packet, len=%04x" % eth.typ
-            print pkt.encode("hex")
+            print("unknown ether packet, len=%04x" % eth.typ)
+            print(pkt.encode("hex"))
         elif eth.typ in self.ether:
             self.ether[eth.typ](ctx, pkt, ofs, last)
         else:
-            print "unknown ether proto: %04x" % eth.typ
-            print pkt.encode("hex")
+            print("unknown ether proto: %04x" % eth.typ)
+            print(pkt.encode("hex"))
 
     def parse_ipv4_options(self, ctx, pkt, ofs, last):
         # 1bit:copied, 
@@ -225,6 +241,10 @@ class PacketDecoder:
 
         ctx.ip.options= pkt[ofs:last]
         #todo
+
+    def parse_usb(self, ctx, pkt, ofs, last):
+        pass
+    # hlen, irp, status, func = struct.unpack_from("<HQLH", pkt, ofs)
 
     def parse_ipv4(self, ctx, pkt, ofs, last):
         ctx.ip = ip = empty()
@@ -247,8 +267,8 @@ class PacketDecoder:
         if ip.proto in self.ip:
             self.ip[ip.proto](ctx, pkt, hdrendofs, last)
         else:
-            print "unknown ip proto:", ip.proto
-            print pkt.encode("hex")
+            print("unknown ip proto:", ip.proto)
+            print(pkt.encode("hex"))
 
     def parse_arp(self, ctx, pkt, ofs, last):
         ctx.arp= pkt[ofs:last]
@@ -326,20 +346,21 @@ class CollectStatistics:
             self.nr[tag]= 0
         self.nr[tag] += 1
     def add(self, tag, value):
-        if not tag in self.sum:
-            self.stats[tag]= Stat()
+        if not tag in self.stats:
+            self.stats[tag]= CollectStatistics.Stat()
         self.stats[tag].add(value)
     def dump(self):
         for t,s in self.nr.items():
-            print "%8d %s" % (s, t)
+            print("%8d %s" % (s, t))
         for t,s in self.stats.items():
-            print "%8f %8f %8f %s" % (s.average(), s.deviation(), s.total(), t)
+            print("%8.1f %8.1f %8.0f %s" % (s.average(), s.deviation(), s.total(), t))
 
 decoder= PacketDecoder()
 
 parser = argparse.ArgumentParser(description='Tool for quick analysis of tcp streams')
 parser.add_argument('-p', '--port', type=int)
 parser.add_argument('-l', '--ssllog', type=str)
+parser.add_argument('-W', '--nowlan', action='store_true')
 parser.add_argument('files',  nargs='*', type=str)
 
 args = parser.parse_args()
@@ -348,6 +369,9 @@ stats= CollectStatistics()
 
 if args.ssllog:
     ssl.keys.add(ssllog)
+
+if args.nowlan:
+    decoder.parse_wlan= False
 
 for fn in args.files:
     if not os.path.isfile(fn):
@@ -358,15 +382,15 @@ for fn in args.files:
         udp= messages.PacketManager()
         try:
             packets= pcap.pcap(fh)
-            print "==> %s <==" % fn
+            print("==> %s <==" % fn)
         except:
-            print "xpcap: %s Not a PCAP file" % fn
+            print("xpcap: %s Not a PCAP file" % fn)
             continue
         if not packets.linktype in decoder.pcap:
-            print "unknown linktype: %d" % packets.linktype
+            print("unknown linktype: %d" % packets.linktype)
             try :
                 ts, pkt = packets.next()
-                print pkt.encode("hex")
+                print(pkt.encode("hex"))
                 continue
             except:
                 pass
@@ -381,11 +405,15 @@ for fn in args.files:
                 if hasattr(ctx, "tcp"):
                     stats.count("tcp.port.%d" % ctx.tcp.src)
                     stats.count("tcp.port.%d" % ctx.tcp.dst)
+                    stats.add("tcp.bytes.%d" % ctx.tcp.src, len(ctx.tcp.payload))
+                    stats.add("tcp.bytes.%d" % ctx.tcp.dst, len(ctx.tcp.payload))
                     if args.port is None or args.port in (ctx.tcp.src, ctx.tcp.dst):
                         tcp.handle(ctx)
                 elif hasattr(ctx, "udp"):
                     stats.count("udp.port.%d" % ctx.udp.src)
                     stats.count("udp.port.%d" % ctx.udp.dst)
+                    stats.add("udp.bytes.%d" % ctx.udp.src, len(ctx.udp.payload))
+                    stats.add("udp.bytes.%d" % ctx.udp.dst, len(ctx.udp.payload))
                     if args.port is None or args.port in (ctx.udp.src, ctx.udp.dst):
                         udp.handle(ctx)
                 elif hasattr(ctx, "ip"):
@@ -397,10 +425,11 @@ for fn in args.files:
                 elif hasattr(ctx, "llc"):
                     stats.count("llc.typ.%04x" % ctx.llc.typ)
                 else:
-                    print "WHAT??  %s" % ",".join(dir(ctx))
+                    #print "WHAT??  %s" % ",".join(dir(ctx))
+                    pass
             except Exception as e:
-                print "E: %s" % e
-                print pkt.encode("hex")
+                print("E: %s" % e)
+                print(pkt.encode("hex"))
                 #raise
 
 stats.dump()

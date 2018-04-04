@@ -35,7 +35,7 @@ def gettlv(data, first, last):
     # 14: T61String
     # 15: VideoTexString
     # 16: IA5String
-    # 17: timestap
+    # 17: timestamp
     # 18
     # 19: GraphicString
     # 1a: VisibleString

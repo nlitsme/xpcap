@@ -1,5 +1,5 @@
 import struct
-from bitfields import bitfields 
+from bitfields import bitfields
 
 #todo: decode addrs in rrdata
 
@@ -131,7 +131,7 @@ class DNSPacket:
                 name += n
                 break  # never continue after ptr
             else:
-                print "WARNING: unsupported label type: %02x" % h
+                print("WARNING: unsupported label type: %02x" % h)
         return name, ofs
     @staticmethod
     def parse_text(pkt, ofs, last):
@@ -200,7 +200,7 @@ class DNSPacket:
         if typ==41: # OPT
             opt= []
             while ofs+4<=last:
-                otyp, olen= struct.unpack_from(">HH", pkt, ofs)  ; ofs += 4
+                otyp, olen= struct.unpack_from(">HH", pkt, ofs)      ; ofs += 4
                 opt.append((otyp, pkt[ofs:ofs+olen].encode("hex")))
                 ofs += olen
             return opt
@@ -209,7 +209,7 @@ class DNSPacket:
             return (flags, proto, alg, pkt[ofs:])
 
         # 10 NULL
-        print "unknown rrtype: %d" % typ
+        print("unknown rrtype: %d" % typ)
         return pkt[ofs:last]
     class RRecord:
         @classmethod

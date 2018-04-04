@@ -1,6 +1,8 @@
 import struct
 import re
 
+from stream_decoders import StreamDecoder
+
 # decodes ssl handshakes
 
 
@@ -48,9 +50,9 @@ class SslKeymanager:
     # test if data is a DER encoded private key
     @staticmethod
     def isDER(data):
-# 00000000: 30 82 02 5c  02 01 00     02 81 81 00 cb ...          privkey
-# 00000000: 30 82 02 9c  30 82 02 05  a0 03 02 01 02  02 06  ...  cert
-# 00000000: 30 82 0e fe  02 01 03  30 82 0e b9  06 09 2a ...      pkcs12
+        # 00000000: 30 82 02 5c  02 01 00     02 81 81 00 cb ...          privkey
+        # 00000000: 30 82 02 9c  30 82 02 05  a0 03 02 01 02  02 06  ...  cert
+        # 00000000: 30 82 0e fe  02 01 03  30 82 0e b9  06 09 2a ...      pkcs12
         if data[0]!='0':
             return False
         if data[1]=="\x81":
@@ -134,7 +136,7 @@ class SslDecoder:
                 0x02: self.HandleHSServerHello,
                 0x04: self.HandleHSNewSessionTicker,
                 0x0b: self.HandleHSCertificate,
-                0x0c: self.HandleHSServerKeyExchange ,
+                0x0c: self.HandleHSServerKeyExchange,
                 0x0d: self.HandleHSCertificateRequest,
                 0x0e: self.HandleHSServerHelloDone,
                 0x0f: self.HandleHSCertificateVerify,
@@ -150,7 +152,7 @@ class SslDecoder:
         self.certs=[ [], [] ]
         self.kxdata=[ [], [] ]
         self.random=[ [], [] ]
-        self.cc= [[], [] ]
+        self.cc= [ [], [] ]
 
     @staticmethod
     def isvaliddata(data, ofs, last):
@@ -183,6 +185,7 @@ class SslDecoder:
             self.odata= data[ofs:last]
         else:
             self.odata= ""
+        return last
 
     # splits stream in handshake, cipher, etc packets
     # return negative for error: -1 = needmore,  -2 = error
@@ -201,8 +204,8 @@ class SslDecoder:
             else:
                 self.outer[typ](version, frm, data, ofs, ofs+pktlen)
         else:
-            print "unknown ssl pkt type: %02x" % typ
-            print data.encode("hex")
+            print("unknown ssl pkt type: %02x" % typ)
+            print(data.encode("hex"))
 
         ofs += pktlen
 
@@ -237,98 +240,115 @@ class SslDecoder:
         if t in self.handshake:
             self.handshake[t](frm, data, ofs, last)
         else:
-            print "unknown ssl hs type: %02x" % t
+            print("unknown ssl hs type: %02x" % t)
         ofs += hslen
         return ofs
 
 
 
     def HandleCipherData(self, version, frm, data, ofs, last):
-        print "ssl cipher: %s" % data[ofs:last].encode("hex")
+        print("ssl cipher: %s" % data[ofs:last].encode("hex"))
 
     def HandleAlert(self, version, frm, data, ofs, last):
-        print "ssl alert: %s" % data[ofs:last].encode("hex")
+        print("ssl alert: %s" % data[ofs:last].encode("hex"))
 
     def HandleChangeCipher(self, version, frm, data, ofs, last):
-        print "ssl cc: %s" % data[ofs:last].encode("hex")
+        print("ssl cc: %s" % data[ofs:last].encode("hex"))
 
         self.cc[frm]= SSLDecryptor(self)
 
     def HandleHeartbeat(self, version, frm, data, ofs, last):
-        print "ssl hb: %s" % data[ofs:last].encode("hex")
+        print("ssl hb: %s" % data[ofs:last].encode("hex"))
 
     def HandleHSHelloRequest(self, frm, data, ofs, last):
-        print "ssl hs:hloreq: %s" % data[ofs:last].encode("hex")
+        print("ssl hs:hloreq: %s" % data[ofs:last].encode("hex"))
+
+    def HandleExtensions(self, data, ofs, last):
+        extsize,= struct.unpack_from(">H", data, ofs)            ; ofs += 2
+        if ofs+extsize>last:
+            print("ssl extension too large")
+        while ofs+4<=last:
+            exttyp, extlen= struct.unpack_from(">HH", data, ofs) ; ofs += 4
+
+            print("    %04x: %s" % (exttyp, data[ofs:ofs+extlen]))
+
+            ofs += extlen
 
     def HandleHSClientHello(self, frm, data, ofs, last):
-        print "ssl hs:ch: %s" % data[ofs:last].encode("hex")
         clientver, clientrandom, sidlen= struct.unpack_from(">H32sB", data, ofs)
         ofs += 3+32
-        sessionid= data[ofs:ofs+sidlen]              ; ofs += sidlen
-        ciplen,= struct.unpack_from(">H", data, ofs)  ; ofs += 2
+        sessionid= data[ofs:ofs+sidlen]                                 ; ofs += sidlen
+        ciplen,= struct.unpack_from(">H", data, ofs)                    ; ofs += 2
         cipherlist= struct.unpack_from(">%dH" % (ciplen/2), data, ofs)  ; ofs += ciplen
 
-        complen,= struct.unpack_from(">B", data, ofs)  ; ofs += 1
-        complist= struct.unpack_from(">%dB" % complen, data, ofs)  ; ofs += complen
+        complen,= struct.unpack_from(">B", data, ofs)                   ; ofs += 1
+        complist= struct.unpack_from(">%dB" % complen, data, ofs)       ; ofs += complen
 
         self.random[frm]= clientrandom
-        # ignoring extensions
+        print("ssl hs:ch: v%04x, rnd:%s, sid:%s" % (clientver, clientrandom.encode("hex"), sessionid.encode("hex")))
+        print("    ciphers: %s" % (",".join(map(lambda x:"%04x" % x, cipherlist))))
+        print("    comp: %s" % (",".join(map(lambda x:"%04x" % x, complist))))
+
+        if ofs<last:
+            self.HandleExtensions(data, ofs, last)
 
     def HandleHSServerHello(self, frm, data, ofs, last):
-        print "ssl hs:sh: %s" % data[ofs:last].encode("hex")
         serverver, serverrandom, sidlen= struct.unpack_from(">H32sB", data, ofs)
         ofs += 3+32
-        sessionid= data[ofs:ofs+sidlen]              ; ofs += sidlen
+        sessionid= data[ofs:ofs+sidlen]                     ; ofs += sidlen
         cipher, comp= struct.unpack_from(">HB", data, ofs)  ; ofs += 3
 
         self.random[frm]= serverrandom
         self.cipher= cipher
+        print("ssl hs:sh: v%04x, rnd:%s, sid:%s" % (serverver, serverrandom.encode("hex"), sessionid.encode("hex")))
+        print("   using cipher %04x, comp %04x" % (cipher, comp))
 
-        # ignoring extensions
+        if ofs<last:
+            self.HandleExtensions(data, ofs, last)
 
 
     def HandleHSNewSessionTicker(self, frm, data, ofs, last):
-        print "ssl hs:ns: %s" % data[ofs:last].encode("hex")
+        print("ssl hs:ns: %s" % data[ofs:last].encode("hex"))
 
     def HandleHSCertificate(self, frm, data, ofs, last):
         def getnum24(data, ofs):
             l2, l1, l0= struct.unpack_from("BBB", data, ofs)
             return (l2<<16) | (l1<<8) | l0
 
-        print "ssl hs:cert: %s" % data[ofs:last].encode("hex")
-        total= getnum24(data, ofs) ; ofs += 3
+        print("ssl hs:cert: %s" % data[ofs:last].encode("hex"))
+        total= getnum24(data, ofs)       ; ofs += 3
         endofs= ofs + total
         while ofs < endofs:
             certlen= getnum24(data, ofs) ; ofs += 3
             self.certs[frm].append(data[ofs:ofs+certlen]) ; ofs += certlen
 
-    def HandleHSServerKeyExchange (self, frm, data, ofs, last):
-        print "ssl hs:svrkx: %s" % data[ofs:last].encode("hex")
+    def HandleHSServerKeyExchange(self, frm, data, ofs, last):
+        print("ssl hs:svrkx: %s" % data[ofs:last].encode("hex"))
         kxlen, = struct.unpack_from(">H", data, ofs)  ; ofs += 2
         self.kxdata[frm]= data[ofs:ofs+kxlen]
 
     def HandleHSCertificateRequest(self, frm, data, ofs, last):
-        print "ssl hs:certreq: %s" % data[ofs:last].encode("hex")
+        print("ssl hs:certreq: %s" % data[ofs:last].encode("hex"))
 
     def HandleHSServerHelloDone(self, frm, data, ofs, last):
-        print "ssl hs:svrhdone: %s" % data[ofs:last].encode("hex")
+        print("ssl hs:svrhdone: %s" % data[ofs:last].encode("hex"))
 
     def HandleHSCertificateVerify(self, frm, data, ofs, last):
-        print "ssl hs:certvfy: %s" % data[ofs:last].encode("hex")
+        print("ssl hs:certvfy: %s" % data[ofs:last].encode("hex"))
 
     def HandleHSClientKeyExchange(self, frm, data, ofs, last):
-        print "ssl hs:cltkx: %s" % data[ofs:last].encode("hex")
+        print("ssl hs:cltkx: %s" % data[ofs:last].encode("hex"))
         kxlen, = struct.unpack_from(">H", data, ofs)  ; ofs += 2
         self.kxdata[frm]= data[ofs:ofs+kxlen]
 
     def HandleHSFinished(self, frm, data, ofs, last):
-        print "ssl hs:finished: %s" % data[ofs:last].encode("hex")
+        print("ssl hs:finished: %s" % data[ofs:last].encode("hex"))
 
     def HandleHSCertificateURL(self, frm, data, ofs, last):
-        print "ssl url:???: %s" % data[ofs:last].encode("hex")
+        print("ssl url:???: %s" % data[ofs:last].encode("hex"))
 
     def HandleHSCertificateStatus(self, frm, data, ofs, last):
-        print "ssl certstat:???: %s" % data[ofs:last].encode("hex")
+        print("ssl certstat:???: %s" % data[ofs:last].encode("hex"))
 
 
 toplevel=SslDecoder

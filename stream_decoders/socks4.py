@@ -1,15 +1,14 @@
 import struct
 
+from stream_decoders import StreamDecoder
+
 # decode socks4 connections
 
-class Socks4Decoder:
+class Socks4Decoder(StreamDecoder):
     def __init__(self, ad):
-# 'ad' points to StreamAutoDetect object, so we can change to a different protocol after say 'websocket',
-# or starttls
-        self.ad= ad
-        self.peers= {}
+        StreamDecoder.__init__(self, ad)
         self.state= 0
-        self.data= [ "", "" ]
+        self.data= ["", ""]
     @staticmethod
     def isvaliddata(data, ofs, last):
         # 04 {01,02,f0,f1}
@@ -23,7 +22,7 @@ class Socks4Decoder:
             self.peers[src]= len(self.peers)
         dir = self.peers[src]
         if dir in self.data and self.data[dir]:
-            data = self.data[ dir ] + data[ofs:last]
+            data = self.data[dir] + data[ofs:last]
             ofs, last= 0, len(data)
 
         if self.state==0:  # await client method req
@@ -33,7 +32,7 @@ class Socks4Decoder:
             if ofs+ulen>=last:
                 return
 
-            uname= data[ofs:ofs+ulen] ; ofs += ulen
+            uname= data[ofs:ofs+ulen]      ; ofs += ulen
             if addr=="\x00\x00\x00\x01":
                 ix= data.find("\x00", ofs)
                 if ix<0:
@@ -44,9 +43,9 @@ class Socks4Decoder:
 
             state = 1  # await server response
             self.data[dir]= data[ofs:last]
-            print "socks4 req: %02x %08x.%04x (%s) (%s)" % (req, addr, port, uname, dstname)
+            print("socks4 req: %02x %08x.%04x (%s) (%s)" % (req, addr, port, uname, dstname))
             if last>ofs:
-                print "-> %d bytes" % (last-ofs)
+                print("-> %d bytes" % (last-ofs))
         elif self.state==1:
             if last-ofs<8:
                 return
@@ -55,11 +54,13 @@ class Socks4Decoder:
 
             self.data[dir]= data[ofs:last]
 
-            print "socks4 ans: %02x %08x.%04x" % (res, addr, port)
+            print("socks4 ans: %02x %08x.%04x" % (res, addr, port))
             if last>ofs:
-                print "-> %d bytes" % (last-ofs)
+                print("-> %d bytes" % (last-ofs))
         else:
             pass
+
+        return last
 
 
 toplevel=Socks4Decoder

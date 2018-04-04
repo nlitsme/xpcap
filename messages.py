@@ -11,12 +11,12 @@ class PacketManager:
         self.dns= DNSPacket
         self.dhcp = DHCPPacket()
     def handle(self, ctx):
-        print "%s UDP %s  %s" % (tsformat(ctx.pcap.ts), pktprefix(ctx.ip, ctx.udp), ctx.udp.payload.encode("hex"))
+        print("%s UDP %s  %s" % (tsformat(ctx.pcap.ts), pktprefix(ctx.ip, ctx.udp), ctx.udp.payload.encode("hex")))
         if {53,5353} & {ctx.udp.src, ctx.udp.dst}:
             r, o= self.dns.parse(ctx.udp.payload, 0, len(ctx.udp.payload))
-            print "DNS:", r
+            print("DNS:", r)
         elif {67,68} & {ctx.udp.src, ctx.udp.dst}:
             d, o= self.dhcp.parse(ctx.udp.payload, 0, len(ctx.udp.payload))
-            print "DHCP:", d
+            print("DHCP:", d)
 
 

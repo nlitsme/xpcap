@@ -237,10 +237,10 @@ class DHCPPacket:
     def parse(pkt, ofs, last):
         dhcp= DHCPPacket()
         if last-ofs<236:
-            print "short dhcp packet"
+            print("short dhcp packet")
             return
         dhcp.op, dhcp.htype, dhcp.hlen, dhcp.hops, dhcp.xid, dhcp.secs, dhcp.flags, \
-                dhcp.ciaddr, dhcp.yiaddr, dhcp.siaddr, dhcp.giaddr, dhcp.chaddr, dhcp.sname, dhcp.file \
+            dhcp.ciaddr, dhcp.yiaddr, dhcp.siaddr, dhcp.giaddr, dhcp.chaddr, dhcp.sname, dhcp.file \
                 = struct.unpack_from(">BBBBLHH4s4s4s4s16s64s128s", pkt)
 
         magic_cookie, = struct.unpack_from(">L", pkt, 236)
@@ -248,7 +248,7 @@ class DHCPPacket:
             dhcp.options= DHCPPacket.parse_options(pkt, 240, last)
         else:
             options= None
-            print "bootp"
+            print("bootp")
 
         # op: 1=req, 2=reply
         # htype: hardware type: 1=10mb ether

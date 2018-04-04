@@ -1,15 +1,14 @@
 import struct
 
+from stream_decoders import StreamDecoder
+
 # decode socks5 connections
 
-class Socks5Decoder:
+class Socks5Decoder(StreamDecoder):
     def __init__(self, ad):
-# 'ad' points to StreamAutoDetect object, so we can change to a different protocol after say 'websocket',
-# or starttls
-        self.ad= ad
-        self.peers= {}
+        StreamDecoder.__init__(self, ad)
         self.state= 0
-        self.data= [ "", "" ]
+        self.data= ["", ""]
     @staticmethod
     def isvaliddata(data, ofs, last):
         # client: 050100  or 050102
@@ -36,72 +35,72 @@ class Socks5Decoder:
         if self.state==0:  # await client method req
             if last-ofs<3:
                 return
-            v, nr= struct.unpack_from("BB", data, ofs)  ; ofs += 2
+            v, nr= struct.unpack_from("BB", data, ofs)   ; ofs += 2
             if ofs+nr>last:
                 return
-            methods= data[ofs:ofs+nr]      ; ofs += nr
+            methods= data[ofs:ofs+nr]                    ; ofs += nr
 
-            print "socks5 client methods: %s" % methods.encode("hex")
+            print("socks5 client methods: %s" % methods.encode("hex"))
             self.state= 1
         elif self.state==1:  # await server method ack
             v, mth= struct.unpack_from("BB", data, ofs)  ; ofs += 2
-            print "socks5: method = %d" % mth
+            print("socks5: method = %d" % mth)
             if mth==2:
                 self.state= 2
             elif mth==0:
                 self.state= 4
             else:
-                print "unsupported socks method"
+                print("unsupported socks method")
         elif self.state==2:  # await username/password from client
             if last-ofs<3:
                 return
-            v, ulen= struct.unpack_from("BB", data, ofs)  ; ofs += 2
+            v, ulen= struct.unpack_from("BB", data, ofs) ; ofs += 2
             if ofs+ulen+1>last:
                 return
-            username= data[ofs:ofs+ulen]  ; ofs += ulen
-            plen= ord(data[ofs])   ; ofs += 1
+            username= data[ofs:ofs+ulen]                 ; ofs += ulen
+            plen= ord(data[ofs])                         ; ofs += 1
             if ofs+plen>last:
                 return
-            password= data[ofs:ofs+plen]  ; ofs += plen
+            password= data[ofs:ofs+plen]                 ; ofs += plen
 
-            print "socks5: login(%s/%s)" % (username, password)
+            print("socks5: login(%s/%s)" % (username, password))
             self.state= 3
         elif self.state==3: # wait server auth ack
             if last-ofs<2:
                 return
-            v, ok= struct.unpack_from("BB", data, ofs)  ; ofs += 2
-            print "socks5: auth: %02x" % ok
+            v, ok= struct.unpack_from("BB", data, ofs)   ; ofs += 2
+            print("socks5: auth: %02x" % ok)
             self.state= 4
         elif self.state in (4,5): # wait client request
             if self.state==5 and dir==0:
                 return
             if last-ofs<8:
-                print "need 8 bytes hdr"
+                print("need 8 bytes hdr")
                 return
             v, req, unk, atype= struct.unpack_from("BBBB", data, ofs)  ; ofs += 4
 
             address= None
             if atype==1:
                 if ofs+4>last:
-                    print "need 4 bytes"
+                    print("need 4 bytes")
                     return
-                address,= struct.unpack_from("<L", data, ofs) ; ofs += 4
+                address,= struct.unpack_from("<L", data, ofs)       ; ofs += 4
             elif atype==4:
                 if ofs+16>last:
-                    print "need 16 bytes"
+                    print("need 16 bytes")
                     return
                 address= struct.unpack_from("<HHHHHHHH", data, ofs) ; ofs += 16
             elif atype==3:
-                alen= ord(data[ofs]) ; ofs += 1
+                alen= ord(data[ofs])                   ; ofs += 1
                 if ofs+alen>last:
-                    print "need %d bytes" % alen
+                    print("need %d bytes" % alen)
                     return
-                address= data[ofs:ofs+alen]   ; ofs += alen
+                address= data[ofs:ofs+alen]            ; ofs += alen
             else:
-                print "socks: unknown address type: %d" % atype
+                print("socks: unknown address type: %d" % atype)
             port,= struct.unpack_from("<H", data, ofs) ; ofs += 2
 
-            print "socks5 req: %02x %s.%04x" % (req, address, port)
+            print("socks5 req: %02x %s.%04x" % (req, address, port))
 
             self.state += 1
         elif self.state==6:
@@ -110,5 +109,6 @@ class Socks5Decoder:
         
         self.data[dir]= data[ofs:last]
 
+        return last
 
 toplevel=Socks5Decoder
