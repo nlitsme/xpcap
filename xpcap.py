@@ -42,6 +42,7 @@ class PacketDecoder:
                 1:self.parse_ether,
                 101:self.parse_ipv4,
                 249:self.parse_usb,
+                113:self.parse_sll,
 #   0  LINKTYPE_NULL  ( loopback )
 #   6  LINKTYPE_IEEE802_5
 #   9  LINKTYPE_PPP
@@ -246,6 +247,14 @@ class PacketDecoder:
         pass
     # hlen, irp, status, func = struct.unpack_from("<HQLH", pkt, ofs)
 
+    def parse_sll(self, ctx, pkt, ofs, last):
+        pkttype, devtype, addrlen, addr, proto = struct.unpack(">HHH8sH", pkt[:16])
+        ctx.eth = eth = empty()
+        eth.src = addr[:addrlen]
+        eth.typ = proto
+        eth.dst = b''
+        eth.slltype = pkttype
+
     def parse_ipv4(self, ctx, pkt, ofs, last):
         ctx.ip = ip = empty()
         verhlen, ip.tos, ip.length, ip.ident, ip.frag, ip.ttl, ip.proto, ip.check, ip.src, ip.dst= struct.unpack_from(">BBHHHBBH4s4s", pkt, ofs)
@@ -355,15 +364,40 @@ class CollectStatistics:
         for t,s in self.stats.items():
             print("%8.1f %8.1f %8.0f %s" % (s.average(), s.deviation(), s.total(), t))
 
+class PortsCollection:
+    def __init__(self, txt):
+        def parsevalue(txt):
+            ab = txt.split('-')
+            if len(ab)==1:
+                return int(ab[0])
+            elif len(ab)==2:
+                return int(ab[0]), int(ab[1])
+            else:
+                raise Exception("invalid value or range: %s" % txt)
+        self.ports = [ parsevalue(_) for _ in txt.split(",") ]
+
+    def matches(self, *ports):
+        for port in ports:
+            for ab in self.ports:
+                if type(ab)==tuple and ab[0] <= port <= ab[1]:
+                    return True
+                elif type(ab)==int and ab == port:
+                    return True
+
+
 decoder= PacketDecoder()
 
 parser = argparse.ArgumentParser(description='Tool for quick analysis of tcp streams')
-parser.add_argument('-p', '--port', type=int)
+parser.add_argument('-p', '--ports', type=str)
 parser.add_argument('-l', '--ssllog', type=str)
 parser.add_argument('-W', '--nowlan', action='store_true')
+parser.add_argument('--debug', action='store_true')
 parser.add_argument('files',  nargs='*', type=str)
 
 args = parser.parse_args()
+
+if args.ports:
+    args.ports = PortsCollection(args.ports)
 
 stats= CollectStatistics()
 
@@ -383,7 +417,9 @@ for fn in args.files:
         try:
             packets= pcap.pcap(fh)
             print("==> %s <==" % fn)
-        except:
+        except Exception as e:
+            if args.debug:
+                raise
             print("xpcap: %s Not a PCAP file" % fn)
             continue
         if not packets.linktype in decoder.pcap:
@@ -392,8 +428,9 @@ for fn in args.files:
                 ts, pkt = packets.next()
                 print(pkt.encode("hex"))
                 continue
-            except:
-                pass
+            except Exception as e:
+                if args.debug:
+                    raise
 
         for ts, pkt in packets:
             ctx= empty()
@@ -407,14 +444,14 @@ for fn in args.files:
                     stats.count("tcp.port.%d" % ctx.tcp.dst)
                     stats.add("tcp.bytes.%d" % ctx.tcp.src, len(ctx.tcp.payload))
                     stats.add("tcp.bytes.%d" % ctx.tcp.dst, len(ctx.tcp.payload))
-                    if args.port is None or args.port in (ctx.tcp.src, ctx.tcp.dst):
+                    if args.ports is None or args.ports.matches(ctx.tcp.src, ctx.tcp.dst):
                         tcp.handle(ctx)
                 elif hasattr(ctx, "udp"):
                     stats.count("udp.port.%d" % ctx.udp.src)
                     stats.count("udp.port.%d" % ctx.udp.dst)
                     stats.add("udp.bytes.%d" % ctx.udp.src, len(ctx.udp.payload))
                     stats.add("udp.bytes.%d" % ctx.udp.dst, len(ctx.udp.payload))
-                    if args.port is None or args.port in (ctx.udp.src, ctx.udp.dst):
+                    if args.ports is None or args.ports.matches(ctx.udp.src, ctx.udp.dst):
                         udp.handle(ctx)
                 elif hasattr(ctx, "ip"):
                     stats.count("ip.proto.%d" % ctx.ip.proto)
@@ -430,6 +467,7 @@ for fn in args.files:
             except Exception as e:
                 print("E: %s" % e)
                 print(pkt.encode("hex"))
-                #raise
+                if args.debug:
+                    raise
 
 stats.dump()
