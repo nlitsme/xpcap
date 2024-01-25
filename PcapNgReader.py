@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import datetime
 import struct
 import sys
@@ -25,6 +26,35 @@ def hexdump(data):
         return " ".join(xx(_) for _ in data)
     else:
         return hexdump(data[:256]) + " ... " + hexdump(data[-256:])
+
+# pcap_usb_header
+#  u_int64_t id;             00   // The 'id' field is used to link a 'submit' event with its coupled 'completion' or 'error' event.
+#  u_int8_t event_type;      08   // The 'event_type' can be one of 'S', 'C' or 'E', to specify respectively, a 'submit', a 'completion' or an 'error' event.
+#  u_int8_t transfer_type;   09   // The 'transfer_type' specifies if this transfer is isochronous (0), interrupt (1), control (2) or bulk (3).
+#  u_int8_t endpoint_number; 0a   // The 'endpoint_number' also specifies the transfer direction: if the bit 0x80 is set, the direction is input (from the device to the host), otherwise it is output (from the host to the device).
+#  u_int8_t device_address;  0b
+#  u_int16_t bus_id;         0c
+#  char setup_flag;          0e   // If the 'setup_flag' is 0, than the setup data is valid.
+#  char data_flag;           0f   // If the 'data_flag' is 0, then this header is followed by the data with the associated URB. In an error event, the 'status' field specifies the error code.
+#  int64_t ts_sec;           10
+#  int32_t ts_usec;          18
+#  int32_t status;           1c
+#  u_int32_t urb_len;        20
+#  u_int32_t data_len;       24
+#  pcap_usb_setup setup;     28  union: either setup pkt, or  errcount+numdesc
+#  int interval              30
+#  int start_frame           34
+#  unsigned xfer_flags       38
+#  unsigned ndesc            3c
+ 
+
+
+def usbdump(data):
+    et, tt, ep = data[8:11]
+    if chr(et)=='S':
+        return f"{chr(et)}:{tt}:{ep:02x}  {data[40:48].hex()} {data[40+24:].hex()}"
+    else:
+        return f"{chr(et)}:{tt}:{ep:02x}   {data[40+24:].hex()}"
 
 def roundup(a, b):
     return ((a-1)|(b-1)) + 1
@@ -71,6 +101,10 @@ class EnhancedPacket:
         if not self.options:
             return ""
         return "\n" + "\n".join(repr(_) for _ in self.options)
+
+    def printusb(self):
+        print("if%d, %s -- %s%s" % (self.ifid, self.time, usbdump(self.data), self.optstr()))
+
     def __repr__(self):
         return "if%d, t=%s -- %s%s" % (self.ifid, self.time, hexdump(self.data), self.optstr())
 
@@ -257,20 +291,39 @@ class PcapNgReader:
             return InterfaceDesc(blockdata)
         elif blktype==0x0a0d0d0a:
             return SectionHeader(blockdata)
+        else:
+            return UnknownEntry(blktype, blockdata)
+
+class UnknownEntry:
+    def __init__(self, type, data):
+        self.type = type
+        self.data = data
+    def __repr__(self):
+        return "unknown(%08x): %s" % (self.type, self.data.hex())
+
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='pcapng dumper')
+    parser.add_argument('--verbose', '-v', action='store_true')
+    parser.add_argument('--usb', '-u', action='store_true', help='format usbmon captures')
     parser.add_argument('FILE', nargs='+')
     args = parser.parse_args()
 
     for filename in args.FILE:
+        print("==>", filename, "<==")
         with open(filename,"rb") as fh:
             for pkt in PcapNgReader(fh):
                 if isinstance(pkt, EnhancedPacket):
-                    if pkt.data[10:13] in (b'\x80\x03\x01',b'\x81\x03\x01',b'\x00\x03\x01',b'\x01\x03\x01',):
-                        if len(pkt.data)>64:
-                            print(pkt)
+                    if args.usb:
+                        pkt.printusb()
+                    else:
+                        print(pkt)
+                    #f pkt.data[10:13] in (b'\x80\x03\x01',b'\x81\x03\x01',b'\x00\x03\x01',b'\x01\x03\x01',):
+                    #   if len(pkt.data)>64:
+                    #       print(pkt)
+                elif args.verbose:
+                    print(pkt)
      
 if __name__ == '__main__':
     main()
