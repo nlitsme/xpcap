@@ -50,11 +50,14 @@ def hexdump(data):
 
 
 def usbdump(data):
-    et, tt, ep = data[8:11]
-    if chr(et)=='S':
-        return f"{chr(et)}:{tt}:{ep:02x}  {data[40:48].hex()} {data[40+24:].hex()}"
+    eptype, xfertype, ep, devaddr, busid = data[8:13]
+    id = f"{ep:02x}.{devaddr}.{busid}"
+    if chr(eptype)=='S' and xfertype==2:
+        return f"{chr(eptype)}:{xfertype}:{id:<8}  {data[40:48].hex()} {data[40+24:].hex()}"
+    elif data[40:48] != b"\x00" * 8:
+        return f"{chr(eptype)}:{xfertype}:{id:<8} <{data[40:48].hex()}>{data[40+24:].hex()}"
     else:
-        return f"{chr(et)}:{tt}:{ep:02x}   {data[40+24:].hex()}"
+        return f"{chr(eptype)}:{xfertype}:{id:<8}   {data[40+24:].hex()}"
 
 def roundup(a, b):
     return ((a-1)|(b-1)) + 1
